@@ -17,94 +17,62 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      # Step 2: 拉取 AOSP GKI 源码（仅拉取最新提交）
-      - name: Clone AOSP GKI Kernel Source (Shallow Clone)
+      # Step 2: 安装依赖和 repo
+      - name: Install Dependencies and Repo
         run: |
-          echo "Cloning AOSP GKI kernel source (latest commit only)"
+          sudo apt update
+          sudo apt install -y build-essential flex bison libssl-dev bc libncurses-dev curl git
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "PATH=$HOME/bin:$PATH" >> $GITHUB_ENV
+
+      # Step 3: 下载工具链
+      - name: Download AOSP Toolchain
+        run: |
+          mkdir -p prebuilts/clang/host/linux-x86
+          cd prebuilts/clang/host
+          repo init -u https://android.googlesource.com/platform/manifest -b master
+          repo sync -c --no-tags --no-clone-bundle clang/linux-x86 --depth=1
+          cd ../../../
+
+      # Step 4: 拉取 AOSP GKI 内核源码
+      - name: Clone AOSP GKI Kernel Source
+        run: |
           git clone --depth=1 https://android.googlesource.com/kernel/common.git -b android-mainline gki
 
-      # Step 3: 设置环境变量
+      # Step 5: 设置环境变量
       - name: Setup Environment Variables
         run: |
-          echo "Setting up environment variables"
           echo "PATH=$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-r450784e/bin:$PATH" >> $GITHUB_ENV
           echo "ARCH=arm64" >> $GITHUB_ENV
           echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
           echo "CROSS_COMPILE_COMPAT=arm-linux-gnueabi-" >> $GITHUB_ENV
           echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
-      # Step 4: 安装依赖
-      - name: Install Dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y build-essential flex bison libssl-dev bc libncurses-dev curl
-
-      # Step 5: 下载工具链
-      - name: Download AOSP Toolchain
-        run: |
-          mkdir -p prebuilts/clang/host/linux-x86
-          curl -L https://dl.google.com/android/repository/clang-r450784e.tar.gz -o clang-r450784e.tar.gz
-          tar -xvf clang-r450784e.tar.gz -C prebuilts/clang/host/linux-x86
-          rm clang-r450784e.tar.gz
-
-      # Step 6: 配置内核（启用 KVM、Docker 等详细配置）
+      # Step 6: 配置内核
       - name: Configure Kernel
         working-directory: gki
         run: |
-          # 加载默认配置
           make defconfig
-
-          # 启用虚拟化支持
           ./scripts/config --enable CONFIG_KVM
-          ./scripts/config --enable CONFIG_KVM_ARM_VGIC
-          ./scripts/config --enable CONFIG_KVM_ARM_PMU
-
-          # 启用 Docker 支持
-          ./scripts/config --enable CONFIG_NET_NS
-          ./scripts/config --enable CONFIG_CGROUPS
-          ./scripts/config --enable CONFIG_CGROUP_DEVICE
-          ./scripts/config --enable CONFIG_CGROUP_FREEZER
-          ./scripts/config --enable CONFIG_CGROUP_PIDS
-          ./scripts/config --enable CONFIG_CGROUP_PERF
-          ./scripts/config --enable CONFIG_CPUSETS
-          ./scripts/config --enable CONFIG_MEMCG
-          ./scripts/config --enable CONFIG_BLK_CGROUP
-          ./scripts/config --enable CONFIG_OVERLAY_FS
-          ./scripts/config --enable CONFIG_VETH
-          ./scripts/config --enable CONFIG_BRIDGE
-          ./scripts/config --enable CONFIG_NETFILTER
-          ./scripts/config --enable CONFIG_IP_NF_FILTER
-          ./scripts/config --enable CONFIG_IP_NF_TARGET_MASQUERADE
-          ./scripts/config --enable CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
-          ./scripts/config --enable CONFIG_NETFILTER_XT_MATCH_CONNTRACK
-          ./scripts/config --enable CONFIG_NETFILTER_XT_MATCH_IPVS
-          ./scripts/config --enable CONFIG_IP_VS
-          ./scripts/config --enable CONFIG_IP_VS_NFCT
-          ./scripts/config --enable CONFIG_IP_VS_PROTO_TCP
-          ./scripts/config --enable CONFIG_IP_VS_PROTO_UDP
-          ./scripts/config --enable CONFIG_IP_VS_RR
           ./scripts/config --enable CONFIG_DOCKER
-
-          # 启用虚拟化网络
-          ./scripts/config --enable CONFIG_VHOST_NET
-
-          # 更新配置
           make olddefconfig
 
       # Step 7: 编译内核
       - name: Build Kernel
         working-directory: gki
         run: |
-          make -j$(nproc) CC=clang LD=ld.lld Image.gz dtbs modules
+          make -j$(nproc) CC=clang LD=ld.lld Image.gz dtbs
 
-      # Step 8: 提取设备的 ramdisk 和命令行
+      # Step 8: 解包 boot.img
       - name: Unpack Boot Image
         run: |
           git clone https://github.com/osm0sis/mkbootimg_tools.git
           cd mkbootimg_tools
           make
           cd ..
-          ./mkbootimg_tools/unpackbootimg --input boot.img --output ./extracted
+          ./mkbootimg_tools/unpackbootimg --input ./boot.img --output ./extracted
 
       # Step 9: 打包新的 boot.img
       - name: Build New Boot Image
@@ -112,7 +80,7 @@ jobs:
           ./mkbootimg_tools/mkbootimg \
             --kernel gki/arch/arm64/boot/Image.gz \
             --ramdisk extracted/boot.img-ramdisk.img \
-            --dtb gki/arch/arm64/boot/dts/mediatek/<your_device>.dtb \
+            --dtb gki/arch/arm64/boot/dts/mediatek/mt6768.dtb \
             --cmdline "$(cat extracted/boot.img-cmdline)" \
             --output new_boot.img
 
