@@ -17,23 +17,23 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      # Step 2: 安装依赖和 repo
-      - name: Install Dependencies and Repo
+      # Step 2: 安装 repo 工具
+      - name: Install Repo Tool
         run: |
           sudo apt update
-          sudo apt install -y build-essential flex bison libssl-dev bc libncurses-dev curl git
+          sudo apt install -y curl git
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           echo "PATH=$HOME/bin:$PATH" >> $GITHUB_ENV
 
-      # Step 3: 下载工具链
-      - name: Download AOSP Toolchain
+      # Step 3: 使用 repo 同步工具链
+      - name: Sync AOSP Toolchain via Repo
         run: |
           mkdir -p prebuilts/clang/host/linux-x86
           cd prebuilts/clang/host
           repo init -u https://android.googlesource.com/platform/manifest -b master
-          repo sync -c --no-tags --no-clone-bundle clang/linux-x86 --depth=1
+          repo sync -c --no-tags --no-clone-bundle clang/linux-x86
           cd ../../../
 
       # Step 4: 拉取 AOSP GKI 内核源码
@@ -50,7 +50,12 @@ jobs:
           echo "CROSS_COMPILE_COMPAT=arm-linux-gnueabi-" >> $GITHUB_ENV
           echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
-      # Step 6: 配置内核
+      # Step 6: 安装依赖
+      - name: Install Dependencies
+        run: |
+          sudo apt install -y build-essential flex bison libssl-dev bc libncurses-dev
+
+      # Step 7: 配置内核
       - name: Configure Kernel
         working-directory: gki
         run: |
@@ -59,13 +64,13 @@ jobs:
           ./scripts/config --enable CONFIG_DOCKER
           make olddefconfig
 
-      # Step 7: 编译内核
+      # Step 8: 编译内核
       - name: Build Kernel
         working-directory: gki
         run: |
           make -j$(nproc) CC=clang LD=ld.lld Image.gz dtbs
 
-      # Step 8: 解包 boot.img
+      # Step 9: 解包 boot.img
       - name: Unpack Boot Image
         run: |
           git clone https://github.com/osm0sis/mkbootimg_tools.git
@@ -74,7 +79,7 @@ jobs:
           cd ..
           ./mkbootimg_tools/unpackbootimg --input ./boot.img --output ./extracted
 
-      # Step 9: 打包新的 boot.img
+      # Step 10: 打包新的 boot.img
       - name: Build New Boot Image
         run: |
           ./mkbootimg_tools/mkbootimg \
@@ -84,7 +89,7 @@ jobs:
             --cmdline "$(cat extracted/boot.img-cmdline)" \
             --output new_boot.img
 
-      # Step 10: 上传结果
+      # Step 11: 上传结果
       - name: Upload New Boot Image
         uses: actions/upload-artifact@v3
         with:
