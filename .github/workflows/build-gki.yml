@@ -1,4 +1,4 @@
-name: Build AOSP GKI Kernel
+name: Build MTK Kernel
 
 on:
   push:
@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: 检出工作流的仓库代码
-      - name: Checkout Workflow Repository
+      # Step 1: 检出代码
+      - name: Checkout Repository
         uses: actions/checkout@v3
 
       # Step 2: 拉取 AOSP GKI 源码（仅拉取最新提交）
@@ -22,8 +22,6 @@ jobs:
         run: |
           echo "Cloning AOSP GKI kernel source (latest commit only)"
           git clone --depth=1 https://android.googlesource.com/kernel/common.git -b android-mainline gki
-          cd gki
-          echo "Shallow clone of GKI source completed."
 
       # Step 3: 设置环境变量
       - name: Setup Environment Variables
@@ -41,28 +39,56 @@ jobs:
           sudo apt update
           sudo apt install -y build-essential flex bison libssl-dev bc libncurses-dev curl
 
-      # Step 5: 下载 AOSP 工具链
+      # Step 5: 下载工具链
       - name: Download AOSP Toolchain
         run: |
           mkdir -p prebuilts/clang/host/linux-x86
-          curl -LO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r450784e.tar.gz
+          curl -L https://dl.google.com/android/repository/clang-r450784e.tar.gz -o clang-r450784e.tar.gz
           tar -xvf clang-r450784e.tar.gz -C prebuilts/clang/host/linux-x86
           rm clang-r450784e.tar.gz
 
-      # Step 6: 配置内核（启用 Docker 和 KVM 支持）
+      # Step 6: 配置内核（启用 KVM、Docker 等详细配置）
       - name: Configure Kernel
         working-directory: gki
         run: |
+          # 加载默认配置
           make defconfig
+
+          # 启用虚拟化支持
           ./scripts/config --enable CONFIG_KVM
           ./scripts/config --enable CONFIG_KVM_ARM_VGIC
-          ./scripts/config --enable CONFIG_VHOST_NET
-          ./scripts/config --enable CONFIG_BRIDGE
-          ./scripts/config --enable CONFIG_NETFILTER
-          ./scripts/config --enable CONFIG_DOCKER
+          ./scripts/config --enable CONFIG_KVM_ARM_PMU
+
+          # 启用 Docker 支持
           ./scripts/config --enable CONFIG_NET_NS
           ./scripts/config --enable CONFIG_CGROUPS
+          ./scripts/config --enable CONFIG_CGROUP_DEVICE
+          ./scripts/config --enable CONFIG_CGROUP_FREEZER
+          ./scripts/config --enable CONFIG_CGROUP_PIDS
+          ./scripts/config --enable CONFIG_CGROUP_PERF
+          ./scripts/config --enable CONFIG_CPUSETS
+          ./scripts/config --enable CONFIG_MEMCG
+          ./scripts/config --enable CONFIG_BLK_CGROUP
           ./scripts/config --enable CONFIG_OVERLAY_FS
+          ./scripts/config --enable CONFIG_VETH
+          ./scripts/config --enable CONFIG_BRIDGE
+          ./scripts/config --enable CONFIG_NETFILTER
+          ./scripts/config --enable CONFIG_IP_NF_FILTER
+          ./scripts/config --enable CONFIG_IP_NF_TARGET_MASQUERADE
+          ./scripts/config --enable CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
+          ./scripts/config --enable CONFIG_NETFILTER_XT_MATCH_CONNTRACK
+          ./scripts/config --enable CONFIG_NETFILTER_XT_MATCH_IPVS
+          ./scripts/config --enable CONFIG_IP_VS
+          ./scripts/config --enable CONFIG_IP_VS_NFCT
+          ./scripts/config --enable CONFIG_IP_VS_PROTO_TCP
+          ./scripts/config --enable CONFIG_IP_VS_PROTO_UDP
+          ./scripts/config --enable CONFIG_IP_VS_RR
+          ./scripts/config --enable CONFIG_DOCKER
+
+          # 启用虚拟化网络
+          ./scripts/config --enable CONFIG_VHOST_NET
+
+          # 更新配置
           make olddefconfig
 
       # Step 7: 编译内核
@@ -71,23 +97,28 @@ jobs:
         run: |
           make -j$(nproc) CC=clang LD=ld.lld Image.gz dtbs modules
 
-      # Step 8: 打包 boot.img
-      - name: Build Boot Image
+      # Step 8: 提取设备的 ramdisk 和命令行
+      - name: Unpack Boot Image
         run: |
-          git clone https://android.googlesource.com/platform/system/tools/mkbootimg.git
-          cd mkbootimg
+          git clone https://github.com/osm0sis/mkbootimg_tools.git
+          cd mkbootimg_tools
           make
-          cd ../gki
-          ../mkbootimg/mkbootimg \
-            --kernel arch/arm64/boot/Image.gz \
-            --ramdisk <path_to_ramdisk.img> \
-            --dtb arch/arm64/boot/dts/qcom/<your_dtb_file>.dtb \
-            --cmdline "console=ttyS0" \
-            --output boot.img
+          cd ..
+          ./mkbootimg_tools/unpackbootimg --input boot.img --output ./extracted
 
-      # Step 9: 上传内核结果
-      - name: Upload Kernel
+      # Step 9: 打包新的 boot.img
+      - name: Build New Boot Image
+        run: |
+          ./mkbootimg_tools/mkbootimg \
+            --kernel gki/arch/arm64/boot/Image.gz \
+            --ramdisk extracted/boot.img-ramdisk.img \
+            --dtb gki/arch/arm64/boot/dts/mediatek/<your_device>.dtb \
+            --cmdline "$(cat extracted/boot.img-cmdline)" \
+            --output new_boot.img
+
+      # Step 10: 上传结果
+      - name: Upload New Boot Image
         uses: actions/upload-artifact@v3
         with:
-          name: boot-img
-          path: gki/boot.img
+          name: new-boot-img
+          path: new_boot.img
