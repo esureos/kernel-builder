@@ -30,10 +30,10 @@ jobs:
       # Step 3: 使用 repo 同步工具链
       - name: Sync AOSP Toolchain via Repo
         run: |
-          mkdir -p prebuilts/clang/host/linux-x86
+          mkdir -p prebuilts/clang/host
           cd prebuilts/clang/host
           repo init -u https://android.googlesource.com/platform/manifest -b master
-          repo sync -c --no-tags --no-clone-bundle clang/linux-x86
+          repo sync -c --no-tags --no-clone-bundle prebuilts/clang/host/linux-x86
           cd ../../../
 
       # Step 4: 拉取 AOSP GKI 内核源码
