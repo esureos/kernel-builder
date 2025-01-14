@@ -17,24 +17,19 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      # Step 2: 安装 repo 工具
-      - name: Install Repo Tool
+      # Step 2: 安装依赖
+      - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y curl git
-          mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod a+x ~/bin/repo
-          echo "PATH=$HOME/bin:$PATH" >> $GITHUB_ENV
+          sudo apt install -y curl git build-essential flex bison libssl-dev bc libncurses-dev gcc-aarch64-linux-gnu
 
-      # Step 3: 使用 repo 同步工具链
-      - name: Sync AOSP Toolchain via Repo
+      # Step 3: 下载工具链
+      - name: Download AOSP Toolchain
         run: |
-          mkdir -p prebuilts/clang/host
-          cd prebuilts/clang/host
-          repo init -u https://android.googlesource.com/platform/manifest -b master
-          repo sync -c --no-tags --no-clone-bundle prebuilts/clang/host/linux-x86
-          cd ../../../
+          mkdir -p prebuilts/clang/host/linux-x86
+          curl -L https://dl.google.com/android/repository/clang-r450784e.tar.gz -o clang-r450784e.tar.gz
+          tar -xvf clang-r450784e.tar.gz -C prebuilts/clang/host/linux-x86
+          rm clang-r450784e.tar.gz
 
       # Step 4: 拉取 AOSP GKI 内核源码
       - name: Clone AOSP GKI Kernel Source
@@ -50,12 +45,7 @@ jobs:
           echo "CROSS_COMPILE_COMPAT=arm-linux-gnueabi-" >> $GITHUB_ENV
           echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
-      # Step 6: 安装依赖
-      - name: Install Dependencies
-        run: |
-          sudo apt install -y build-essential flex bison libssl-dev bc libncurses-dev
-
-      # Step 7: 配置内核
+      # Step 6: 配置内核
       - name: Configure Kernel
         working-directory: gki
         run: |
@@ -64,34 +54,15 @@ jobs:
           ./scripts/config --enable CONFIG_DOCKER
           make olddefconfig
 
-      # Step 8: 编译内核
+      # Step 7: 编译内核
       - name: Build Kernel
         working-directory: gki
         run: |
-          make -j$(nproc) CC=clang LD=ld.lld Image.gz dtbs
+          make -j$(nproc) CC=clang CROSS_COMPILE=aarch64-linux-gnu- LD=ld.lld Image.gz dtbs
 
-      # Step 9: 解包 boot.img
-      - name: Unpack Boot Image
-        run: |
-          git clone https://github.com/osm0sis/mkbootimg_tools.git
-          cd mkbootimg_tools
-          make
-          cd ..
-          ./mkbootimg_tools/unpackbootimg --input ./boot.img --output ./extracted
-
-      # Step 10: 打包新的 boot.img
-      - name: Build New Boot Image
-        run: |
-          ./mkbootimg_tools/mkbootimg \
-            --kernel gki/arch/arm64/boot/Image.gz \
-            --ramdisk extracted/boot.img-ramdisk.img \
-            --dtb gki/arch/arm64/boot/dts/mediatek/mt6768.dtb \
-            --cmdline "$(cat extracted/boot.img-cmdline)" \
-            --output new_boot.img
-
-      # Step 11: 上传结果
-      - name: Upload New Boot Image
+      # Step 8: 上传结果
+      - name: Upload Kernel Image
         uses: actions/upload-artifact@v3
         with:
-          name: new-boot-img
-          path: new_boot.img
+          name: kernel-image
+          path: gki/arch/arm64/boot/Image.gz
