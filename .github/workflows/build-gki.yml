@@ -1,0 +1,93 @@
+name: Build AOSP GKI Kernel
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: 检出工作流的仓库代码
+      - name: Checkout Workflow Repository
+        uses: actions/checkout@v3
+
+      # Step 2: 拉取 AOSP GKI 源码（仅拉取最新提交）
+      - name: Clone AOSP GKI Kernel Source (Shallow Clone)
+        run: |
+          echo "Cloning AOSP GKI kernel source (latest commit only)"
+          git clone --depth=1 https://android.googlesource.com/kernel/common.git -b android-mainline gki
+          cd gki
+          echo "Shallow clone of GKI source completed."
+
+      # Step 3: 设置环境变量
+      - name: Setup Environment Variables
+        run: |
+          echo "Setting up environment variables"
+          echo "PATH=$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-r450784e/bin:$PATH" >> $GITHUB_ENV
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE_COMPAT=arm-linux-gnueabi-" >> $GITHUB_ENV
+          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
+
+      # Step 4: 安装依赖
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential flex bison libssl-dev bc libncurses-dev curl
+
+      # Step 5: 下载 AOSP 工具链
+      - name: Download AOSP Toolchain
+        run: |
+          mkdir -p prebuilts/clang/host/linux-x86
+          curl -LO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r450784e.tar.gz
+          tar -xvf clang-r450784e.tar.gz -C prebuilts/clang/host/linux-x86
+          rm clang-r450784e.tar.gz
+
+      # Step 6: 配置内核（启用 Docker 和 KVM 支持）
+      - name: Configure Kernel
+        working-directory: gki
+        run: |
+          make defconfig
+          ./scripts/config --enable CONFIG_KVM
+          ./scripts/config --enable CONFIG_KVM_ARM_VGIC
+          ./scripts/config --enable CONFIG_VHOST_NET
+          ./scripts/config --enable CONFIG_BRIDGE
+          ./scripts/config --enable CONFIG_NETFILTER
+          ./scripts/config --enable CONFIG_DOCKER
+          ./scripts/config --enable CONFIG_NET_NS
+          ./scripts/config --enable CONFIG_CGROUPS
+          ./scripts/config --enable CONFIG_OVERLAY_FS
+          make olddefconfig
+
+      # Step 7: 编译内核
+      - name: Build Kernel
+        working-directory: gki
+        run: |
+          make -j$(nproc) CC=clang LD=ld.lld Image.gz dtbs modules
+
+      # Step 8: 打包 boot.img
+      - name: Build Boot Image
+        run: |
+          git clone https://android.googlesource.com/platform/system/tools/mkbootimg.git
+          cd mkbootimg
+          make
+          cd ../gki
+          ../mkbootimg/mkbootimg \
+            --kernel arch/arm64/boot/Image.gz \
+            --ramdisk <path_to_ramdisk.img> \
+            --dtb arch/arm64/boot/dts/qcom/<your_dtb_file>.dtb \
+            --cmdline "console=ttyS0" \
+            --output boot.img
+
+      # Step 9: 上传内核结果
+      - name: Upload Kernel
+        uses: actions/upload-artifact@v3
+        with:
+          name: boot-img
+          path: gki/boot.img
