@@ -34,25 +34,40 @@ jobs:
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
-          echo "PATH=~/bin:\$PATH" >> $GITHUB_ENV
+          echo "PATH=$HOME/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH" >> $GITHUB_ENV
 
-      # Step 4: 下载 AOSP GKI 源码
-      - name: Download AOSP GKI kernel source
-        run: |
-          mkdir -p kernel
-          cd kernel
-          repo init -u https://android.googlesource.com/kernel/common -b ${{ github.event.inputs.kernel_branch }}
-          repo sync -j$(nproc)
+      # Step 4: 缓存工具链
+      - name: Cache prebuilt clang
+        uses: actions/cache@v3
+        with:
+          path: prebuilts/clang/host/linux-x86/${{ github.event.inputs.clang_version }}
+          key: ${{ runner.os }}-clang-${{ github.event.inputs.clang_version }}
 
-      # Step 5: 下载指定版本的工具链
+      # Step 5: 下载工具链
       - name: Download AOSP prebuilt clang
+        if: steps.cache-prebuilt-clang.outputs.cache-hit != 'true'
         run: |
           mkdir -p prebuilts/clang/host/linux-x86
           wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/${{ github.event.inputs.clang_version }}.tar.gz -O clang.tar.gz
           tar -xzf clang.tar.gz -C prebuilts/clang/host/linux-x86
-          export PATH=$PATH:$PWD/prebuilts/clang/host/linux-x86/${{ github.event.inputs.clang_version }}/bin
 
-      # Step 6: 配置内核
+      # Step 6: 缓存源码
+      - name: Cache kernel source
+        uses: actions/cache@v3
+        with:
+          path: kernel
+          key: ${{ runner.os }}-kernel-${{ github.event.inputs.kernel_branch }}
+
+      # Step 7: 下载 AOSP GKI 源码
+      - name: Download AOSP GKI kernel source
+        if: steps.cache-kernel-source.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p kernel
+          cd kernel
+          repo init -u https://android.googlesource.com/kernel/common -b ${{ github.event.inputs.kernel_branch }}
+          repo sync -j$(nproc) --no-clone-bundle --optimized-fetch
+
+      # Step 8: 配置内核
       - name: Configure kernel
         run: |
           cd kernel/common
@@ -62,16 +77,21 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           make O=out aarch64_gki_defconfig
 
-      # Step 7: 编译内核
+      # Step 9: 编译内核
       - name: Build kernel
         run: |
           cd kernel/common
           export ARCH=arm64
           export PATH=$PWD/prebuilts/clang/host/linux-x86/${{ github.event.inputs.clang_version }}/bin:$PATH
-          make -j$(nproc) O=out
+          make -j$(nproc) O=out | tee build.log
 
-      # Step 8: 上传编译输出
-      - name: Upload artifacts
+      # Step 10: 上传构建日志和结果
+      - name: Upload build log
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: kernel/common/build.log
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: kernel-build
