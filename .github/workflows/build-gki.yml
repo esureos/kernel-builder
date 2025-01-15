@@ -1,4 +1,4 @@
-name: Build MTK Kernel
+name: Build Android GKI Kernel
 
 on:
   push:
@@ -13,56 +13,62 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: 检出代码
-      - name: Checkout Repository
+      # Step 1: 检出GitHub仓库代码（如果有额外文件）
+      - name: Checkout GitHub repository
         uses: actions/checkout@v3
 
-      # Step 2: 安装依赖
-      - name: Install Dependencies
+      # Step 2: 设置系统依赖
+      - name: Set up dependencies
         run: |
-          sudo apt update
-          sudo apt install -y curl git build-essential flex bison libssl-dev bc libncurses-dev gcc-aarch64-linux-gnu
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libncurses5-dev
+          sudo apt-get install -y ccache git-core python3
 
-      # Step 3: 下载工具链
-      - name: Download AOSP Toolchain
+      # Step 3: 下载repo工具
+      - name: Install repo tool
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          export PATH=~/bin:$PATH
+
+      # Step 4: 初始化并同步AOSP GKI源码
+      - name: Download AOSP GKI kernel source
+        run: |
+          mkdir -p kernel
+          cd kernel
+          repo init -u https://android.googlesource.com/kernel/common -b android12-5.10
+          repo sync -j$(nproc)
+
+      # Step 5: 下载AOSP预构建工具链
+      - name: Download AOSP prebuilt clang
         run: |
           mkdir -p prebuilts/clang/host/linux-x86
-          curl -L https://dl.google.com/android/repository/clang-r450784e.tar.gz -o clang-r450784e.tar.gz
-          tar -xvf clang-r450784e.tar.gz -C prebuilts/clang/host/linux-x86
-          rm clang-r450784e.tar.gz
-
-      # Step 4: 拉取 AOSP GKI 内核源码
-      - name: Clone AOSP GKI Kernel Source
-        run: |
-          git clone --depth=1 https://android.googlesource.com/kernel/common.git -b android-mainline gki
-
-      # Step 5: 设置环境变量
-      - name: Setup Environment Variables
-        run: |
-          echo "PATH=$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-r450784e/bin:$PATH" >> $GITHUB_ENV
-          echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
-          echo "CROSS_COMPILE_COMPAT=arm-linux-gnueabi-" >> $GITHUB_ENV
-          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r530567.tar.gz -O clang.tar.gz
+          tar -xzf clang.tar.gz -C prebuilts/clang/host/linux-x86
+          export PATH=$PATH:$PWD/prebuilts/clang/host/linux-x86/clang-r530567/bin
 
       # Step 6: 配置内核
-      - name: Configure Kernel
-        working-directory: gki
+      - name: Configure kernel
         run: |
-          make defconfig
-          ./scripts/config --enable CONFIG_KVM
-          ./scripts/config --enable CONFIG_DOCKER
-          make olddefconfig
+          cd kernel/common
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export PATH=$PWD/prebuilts/clang/host/linux-x86/clang-r530567/bin:$PATH
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          make O=out aarch64_gki_defconfig
 
       # Step 7: 编译内核
-      - name: Build Kernel
-        working-directory: gki
+      - name: Build kernel
         run: |
-          make -j$(nproc) CC=clang CROSS_COMPILE=aarch64-linux-gnu- LD=ld.lld Image.gz dtbs
+          cd kernel/common
+          export ARCH=arm64
+          export PATH=$PWD/prebuilts/clang/host/linux-x86/clang-r530567/bin:$PATH
+          make -j$(nproc) O=out
 
-      # Step 8: 上传结果
-      - name: Upload Kernel Image
+      # Step 8: 上传编译输出
+      - name: Upload artifacts
         uses: actions/upload-artifact@v3
         with:
-          name: kernel-image
-          path: gki/arch/arm64/boot/Image.gz
+          name: kernel-build
+          path: kernel/common/out/arch/arm64/boot/
