@@ -51,23 +51,41 @@ jobs:
           echo "Modifying build config: $config_file"
 
           # 添加 Docker 支持相关配置
+          ## Namespace 支持
           echo "CONFIG_NAMESPACES=y" >> $config_file
-          echo "CONFIG_CGROUPS=y" >> $config_file
-          echo "CONFIG_OVERLAY_FS=y" >> $config_file
           echo "CONFIG_NET_NS=y" >> $config_file
+          ## Cgroup 支持
+          echo "CONFIG_CGROUPS=y" >> $config_file
+          echo "CONFIG_CGROUP_CPU=y" >> $config_file
+          echo "CONFIG_CGROUP_SCHED=y" >> $config_file
+          echo "CONFIG_CGROUP_DEVICE=y" >> $config_file
+          echo "CONFIG_CGROUP_FREEZER=y" >> $config_file
+          echo "CONFIG_CGROUP_PIDS=y" >> $config_file
+          ## OverlayFS 支持（用于文件系统层的支持）
+          echo "CONFIG_OVERLAY_FS=y" >> $config_file
+          ## Network 支持
           echo "CONFIG_VETH=y" >> $config_file
+          echo "CONFIG_BRIDGE=y" >> $config_file
+          echo "CONFIG_NF_NAT=y" >> $config_file
+          echo "CONFIG_NF_CONNTRACK=y" >> $config_file
+          echo "CONFIG_NETFILTER_XTABLES=y" >> $config_file
 
           # 添加 KVM 支持相关配置
           echo "CONFIG_VIRTUALIZATION=y" >> $config_file
           echo "CONFIG_KVM=y" >> $config_file
-          echo "CONFIG_KVM_INTEL=y" >> $config_file
-          echo "CONFIG_KVM_AMD=y" >> $config_file
+          echo "CONFIG_KVM_INTEL=y" >> $config_file    # 针对 Intel CPU
+          echo "CONFIG_KVM_AMD=y" >> $config_file      # 针对 AMD CPU
+          echo "CONFIG_KVM_ARM_HOST=y" >> $config_file # 针对 ARM64 CPU
 
           # 添加 LXC 支持相关配置
+          ## Namespace 和 Cgroup 支持
           echo "CONFIG_UTS_NS=y" >> $config_file
           echo "CONFIG_IPC_NS=y" >> $config_file
           echo "CONFIG_PID_NS=y" >> $config_file
+          ## AppArmor 支持
           echo "CONFIG_SECURITY_APPARMOR=y" >> $config_file
+          echo "CONFIG_SECURITY_APPARMOR_HASH=y" >> $config_file
+          echo "CONFIG_SECURITY_APPARMOR_HASH_DEFAULT=y" >> $config_file
 
           # 打印修改后的配置
           echo "Updated $config_file:"
