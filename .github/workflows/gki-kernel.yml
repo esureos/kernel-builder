@@ -47,14 +47,6 @@ jobs:
       # Step 5: 构建内核
       - name: Build kernel with ThinLTO
         run: |
-          cd kernel
-          # 确保 Clang 工具链路径正确
-          if [ -d "prebuilts/clang/host/linux-x86/clang-r*/bin" ]; then
-            export PATH=$PWD/prebuilts/clang/host/linux-x86/clang-r*/bin:$PATH
-          else
-            echo "Clang toolchain not found" && exit 1
-          fi
-
           # 执行构建命令
           LTO=thin BUILD_CONFIG=${{ github.event.inputs.build_config }} build/build.sh
 
