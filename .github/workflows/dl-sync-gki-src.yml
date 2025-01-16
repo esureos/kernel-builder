@@ -9,28 +9,58 @@ on:
         default: "common-android12-5.10"
       target_branch:
         description: "Target GitHub branch to push the GKI source (e.g., gki-n)"
-        required: true
-        default: "a12-5.10"
+        required: false  # 不再强制输入
+        default: ""
 
 jobs:
   sync-and-push:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: 检出目标分支代码
-      - name: Checkout target branch
+      # Step 1: 检出目标仓库代码
+      - name: Checkout GitHub repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.target_branch }} # 检出目标分支
           fetch-depth: 0 # 确保完整克隆（便于推送）
 
-      # Step 2: 安装依赖
+      # Step 2: 生成目标分支名称
+      - name: Generate target branch name
+        run: |
+          if [ -z "${{ github.event.inputs.target_branch }}" ]; then
+            target_branch=${{ github.event.inputs.gki_branch }}-sync
+          else
+            target_branch=${{ github.event.inputs.target_branch }}
+          fi
+          echo "target_branch=$target_branch" >> $GITHUB_ENV
+
+      # Step 3: 检查目标分支是否存在
+      - name: Check if target branch exists
+        id: check_branch
+        run: |
+          if git ls-remote --heads origin $target_branch | grep -q $target_branch; then
+            echo "Branch exists."
+            echo "branch_exists=true" >> $GITHUB_ENV
+          else
+            echo "Branch does not exist. It will be created."
+            echo "branch_exists=false" >> $GITHUB_ENV
+          fi
+
+      # Step 4: 切换到目标分支（如果不存在则创建）
+      - name: Create or switch to target branch
+        run: |
+          if [ "${{ env.branch_exists }}" == "false" ]; then
+            git checkout -b $target_branch
+          else
+            git checkout $target_branch
+          fi
+
+      # Step 5: 安装依赖
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y git python3 curl aria2
 
-      # Step 3: 安装 repo 工具
+      # Step 6: 安装 repo 工具
       - name: Install repo tool
         run: |
           mkdir -p ~/bin
@@ -38,34 +68,34 @@ jobs:
           chmod a+x ~/bin/repo
           echo "PATH=$HOME/bin:$PATH" >> $GITHUB_ENV
 
-      # Step 4: 同步 GKI 源码
+      # Step 7: 同步 GKI 源码
       - name: Sync AOSP GKI source
         run: |
+          rm -rf gki-source
           mkdir -p gki-source
           cd gki-source
-          if [ ! -d ".repo" ]; then
-            # 初始化 repo
-            repo init -u https://android.googlesource.com/kernel/manifest -b ${{ github.event.inputs.gki_branch }}
-          fi
-          # 同步源码
-          repo sync -j$(nproc) --no-clone-bundle --optimized-fetch
+          repo init -u https://android.googlesource.com/kernel/manifest -b ${{ github.event.inputs.gki_branch }}
+          repo sync -j$(nproc) --no-clone-bundle --optimized-fetch | tee sync.log
+          cd ..
 
-      # Step 5: 替换目标分支内容
+      # Step 8: 替换目标分支内容
       - name: Replace target branch content
         run: |
-          # 清空当前分支的所有文件
           git rm -rf . || true
-          # 将同步的 GKI 源码复制到当前仓库目录
           cp -r gki-source/* .
-          # 添加新文件到 Git 索引
-          git add .
+          git add -A
 
-      # Step 6: 提交并推送到 GitHub 分支
+      # Step 9: 提交并推送到 GitHub 分支
       - name: Commit and push changes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Sync GKI source from AOSP branch ${{ github.event.inputs.gki_branch }}"
-          git push origin HEAD:${{ github.event.inputs.target_branch }}
+          git push origin $target_branch --force
+
