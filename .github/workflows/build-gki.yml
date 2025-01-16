@@ -4,13 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       kernel_branch:
-        description: "Kernel branch to build (e.g., android12-5.10)"
+        description: "Kernel branch to build (e.g., common-android12-5.10)"
         required: true
-        default: "android12-5.10"
-      clang_version:
-        description: "Clang version (e.g., clang-r530567)"
-        required: true
-        default: "clang-r530567"
+        default: "common-android12-5.10"
 
 jobs:
   build:
@@ -26,7 +22,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison flex libssl-dev libncurses5-dev
-          sudo apt-get install -y ccache git-core python3 curl
+          sudo apt-get install -y ccache git-core python3 curl aria2
 
       # Step 3: 安装 repo 工具
       - name: Install repo tool
@@ -34,58 +30,55 @@ jobs:
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
+          # 添加自定义路径并保留系统默认路径
           echo "PATH=$HOME/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH" >> $GITHUB_ENV
 
-      # Step 4: 缓存工具链
-      - name: Cache prebuilt clang
-        uses: actions/cache@v3
-        with:
-          path: prebuilts/clang/host/linux-x86/${{ github.event.inputs.clang_version }}
-          key: ${{ runner.os }}-clang-${{ github.event.inputs.clang_version }}
-
-      # Step 5: 下载工具链
-      - name: Download AOSP prebuilt clang
-        if: steps.cache-prebuilt-clang.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p prebuilts/clang/host/linux-x86
-          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/${{ github.event.inputs.clang_version }}.tar.gz -O clang.tar.gz
-          tar -xzf clang.tar.gz -C prebuilts/clang/host/linux-x86
-
-      # Step 6: 缓存源码
-      - name: Cache kernel source
+      # Step 4: 缓存 kernel 源码和环境
+      - name: Cache kernel source and toolchain
         uses: actions/cache@v3
         with:
           path: kernel
           key: ${{ runner.os }}-kernel-${{ github.event.inputs.kernel_branch }}
+          restore-keys: |
+            ${{ runner.os }}-kernel-
 
-      # Step 7: 下载 AOSP GKI 源码
-      - name: Download AOSP GKI kernel source
-        if: steps.cache-kernel-source.outputs.cache-hit != 'true'
+      # Step 5: 下载 AOSP GKI 源码及工具链（如果缓存未命中）
+      - name: Download AOSP GKI kernel source and toolchain
+        if: steps.cache-kernel-source-and-toolchain.outputs.cache-hit != 'true'
         run: |
           mkdir -p kernel
           cd kernel
-          repo init -u https://android.googlesource.com/kernel/common -b ${{ github.event.inputs.kernel_branch }}
+          # 初始化仓库
+          repo init -u https://android.googlesource.com/kernel/manifest -b ${{ github.event.inputs.kernel_branch }}
+          # 同步源码和工具链
           repo sync -j$(nproc) --no-clone-bundle --optimized-fetch
 
-      # Step 8: 配置内核
+      # Step 6: 验证工具链和路径
+      - name: Verify toolchain
+        run: |
+          ls -al kernel/prebuilts/clang/host/linux-x86/
+          echo "PATH: $PATH"
+
+      # Step 7: 配置内核
       - name: Configure kernel
         run: |
           cd kernel/common
           export ARCH=arm64
           export SUBARCH=arm64
-          export PATH=$PWD/prebuilts/clang/host/linux-x86/${{ github.event.inputs.clang_version }}/bin:$PATH
+          # 动态工具链路径
+          export PATH=$PWD/prebuilts/clang/host/linux-x86/clang-r*/bin:$PATH
           export CROSS_COMPILE=aarch64-linux-gnu-
           make O=out aarch64_gki_defconfig
 
-      # Step 9: 编译内核
+      # Step 8: 编译内核
       - name: Build kernel
         run: |
           cd kernel/common
           export ARCH=arm64
-          export PATH=$PWD/prebuilts/clang/host/linux-x86/${{ github.event.inputs.clang_version }}/bin:$PATH
+          export PATH=$PWD/prebuilts/clang/host/linux-x86/clang-r*/bin:$PATH
           make -j$(nproc) O=out | tee build.log
 
-      # Step 10: 上传构建日志和结果
+      # Step 9: 上传构建日志和结果
       - name: Upload build log
         uses: actions/upload-artifact@v4
         with:
