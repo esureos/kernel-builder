@@ -102,10 +102,9 @@ jobs:
         run: |
           # 克隆 AnyKernel3 项目
           git clone https://github.com/osm0sis/AnyKernel3.git anykernel3
-
+          rm -rf anykernel3/{.*,modules,patch,randisk,README.md}
           # 复制内核镜像
-          cp kernel/out/arch/arm64/boot/Image.gz anykernel3/zImage || \
-          cp kernel/out/arch/arm64/boot/Image anykernel3/zImage
+          cp kernel/out/arch/arm64/boot/Image.gz anykernel3/
 
           # 复制设备树文件（dtb）
           mkdir -p anykernel3/dtb
@@ -133,7 +132,6 @@ jobs:
           name: kernel-image
           path: |
             kernel/out/arch/arm64/boot/Image.gz
-            kernel/out/arch/arm64/boot/Image
 
       # Step 10: 上传模块文件
       - name: Upload kernel modules
