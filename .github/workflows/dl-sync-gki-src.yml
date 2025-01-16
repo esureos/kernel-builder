@@ -9,7 +9,7 @@ on:
         default: "common-android12-5.10"
       target_branch:
         description: "Target GitHub branch to push the GKI source (e.g., gki-n)"
-        required: false  # 不再强制输入
+        required: false
         default: ""
 
 jobs:
@@ -21,7 +21,7 @@ jobs:
       - name: Checkout GitHub repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # 确保完整克隆（便于推送）
+          fetch-depth: 0
 
       # Step 2: 生成目标分支名称
       - name: Generate target branch name
@@ -60,6 +60,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y git python3 curl aria2
 
+      # Step 5.1: 清理磁盘空间
+      - name: Clean up disk space
+        run: |
+          sudo apt-get clean
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo rm -rf /home/runner/work/_temp
+          df -h
+
       # Step 6: 安装 repo 工具
       - name: Install repo tool
         run: |
@@ -74,15 +82,22 @@ jobs:
           rm -rf gki-source
           mkdir -p gki-source
           cd gki-source
-          repo init -u https://android.googlesource.com/kernel/manifest -b ${{ github.event.inputs.gki_branch }}
+          repo init -u https://android.googlesource.com/kernel/manifest -b ${{ github.event.inputs.gki_branch }} --depth=1
           repo sync -j$(nproc) --no-clone-bundle --optimized-fetch | tee sync.log
           cd ..
+
+      # Step 7.2: 上传同步日志
+      - name: Upload repo sync log
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-sync-log
+          path: gki-source/sync.log
 
       # Step 8: 替换目标分支内容
       - name: Replace target branch content
         run: |
           git rm -rf . || true
-          cp -r gki-source/* .
+          mv gki-source/* .
           git add -A
 
       # Step 9: 提交并推送到 GitHub 分支
@@ -91,11 +106,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if git diff --cached --quiet; then
-            echo "No changes to commit."
+            echo "No changes to commit. Skipping push."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Sync GKI source from AOSP branch ${{ github.event.inputs.gki_branch }}"
           git push origin $target_branch --force
-
