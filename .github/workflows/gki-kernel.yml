@@ -47,6 +47,7 @@ jobs:
       # Step 5: 构建内核
       - name: Build kernel with ThinLTO
         run: |
+          cd kernel
           # 执行构建命令
           LTO=thin BUILD_CONFIG=${{ github.event.inputs.build_config }} build/build.sh
 
