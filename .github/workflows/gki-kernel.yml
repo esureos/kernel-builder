@@ -51,9 +51,52 @@ jobs:
           # 执行构建命令
           LTO=thin BUILD_CONFIG=${{ github.event.inputs.build_config }} build/build.sh
 
-      # Step 6: 上传构建结果
-      - name: Upload build artifacts
+      # Step 6: 打包 AnyKernel3 ZIP 文件
+      - name: Package AnyKernel3
+        run: |
+          # 克隆 AnyKernel3 项目
+          git clone https://github.com/osm0sis/AnyKernel3.git anykernel3
+          rm -rf anykernel3/{.*,modules,patch,randisk,README.md}
+          # 复制内核镜像
+          cp kernel/out/arch/arm64/boot/Image.gz anykernel3/
+
+          # 复制设备树文件（dtb）
+          mkdir -p anykernel3/dtb
+          cp kernel/out/arch/arm64/boot/dts/*.dtb anykernel3/dtb/
+
+          # 如果需要内核模块，复制到模块目录
+          mkdir -p anykernel3/modules
+          cp kernel/out/lib/modules/**/*.ko anykernel3/modules/ || true
+
+          # 压缩打包 AnyKernel3
+          cd anykernel3
+          zip -r9 AnyKernel3.zip ./*
+
+      # Step 7: 上传 AnyKernel3 ZIP 文件
+      - name: Upload AnyKernel3 ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-build
-          path: kernel/out/
+          name: AnyKernel3-package
+          path: anykernel3/AnyKernel3.zip
+
+      # Step 8: 上传内核镜像文件
+      - name: Upload kernel image
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-image
+          path: |
+            kernel/out/arch/arm64/boot/Image.gz
+
+      # Step 9: 上传模块文件
+      - name: Upload kernel modules
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-modules
+          path: kernel/out/lib/modules/**/*.ko
+
+      # Step 10: 上传设备树文件
+      - name: Upload dtb files
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtb-files
+          path: kernel/out/arch/arm64/boot/dts/*.dtb
