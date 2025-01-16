@@ -1,4 +1,4 @@
-name: Build Android GKI Kernel
+name: Build GKI Kernel with AnyKernel3 Packaging
 
 on:
   workflow_dispatch:
@@ -7,6 +7,10 @@ on:
         description: "Kernel branch to build (e.g., common-android12-5.10)"
         required: true
         default: "common-android12-5.10"
+      build_config:
+        description: "Build config file (e.g., common/build.config.gki.aarch64)"
+        required: true
+        default: "common/build.config.gki.aarch64"
 
 jobs:
   build:
@@ -17,12 +21,12 @@ jobs:
       - name: Checkout GitHub repository
         uses: actions/checkout@v4
 
-      # Step 2: 设置系统依赖
-      - name: Set up dependencies
+      # Step 2: 安装依赖
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison flex libssl-dev libncurses5-dev
-          sudo apt-get install -y ccache git-core python3 curl aria2
+          sudo apt-get install -y ccache git-core python3 curl gcc-aarch64-linux-gnu zip
 
       # Step 3: 安装 repo 工具
       - name: Install repo tool
@@ -32,61 +36,97 @@ jobs:
           chmod a+x ~/bin/repo
           echo "PATH=$HOME/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH" >> $GITHUB_ENV
 
-      # Step 4: 缓存 kernel 源码和工具链
-      - name: Cache kernel source and toolchain
-        uses: actions/cache@v3
-        with:
-          path: kernel
-          key: ${{ runner.os }}-kernel-${{ github.event.inputs.kernel_branch }}
-          restore-keys: |
-            ${{ runner.os }}-kernel-
-
-      # Step 5: 下载 AOSP GKI 源码及工具链（如果缓存未命中）
-      - name: Download AOSP GKI kernel source and toolchain
-        if: steps.cache-kernel-source-and-toolchain.outputs.cache-hit != 'true'
+      # Step 4: 同步内核源码
+      - name: Sync AOSP kernel source
         run: |
           mkdir -p kernel
           cd kernel
           repo init -u https://android.googlesource.com/kernel/manifest -b ${{ github.event.inputs.kernel_branch }}
           repo sync -j$(nproc) --no-clone-bundle --optimized-fetch
 
-      # Step 6: 验证同步结果
-      - name: Verify repo sync and toolchain
+      # Step 5: 动态修改 build_config
+      - name: Modify build_config for Docker, KVM, and LXC
+        run: |
+          config_file=kernel/${{ github.event.inputs.build_config }}
+          echo "Modifying build config: $config_file"
+
+          # 添加 Docker 支持相关配置
+          echo "CONFIG_NAMESPACES=y" >> $config_file
+          echo "CONFIG_CGROUPS=y" >> $config_file
+          echo "CONFIG_OVERLAY_FS=y" >> $config_file
+          echo "CONFIG_NET_NS=y" >> $config_file
+          echo "CONFIG_VETH=y" >> $config_file
+
+          # 添加 KVM 支持相关配置
+          echo "CONFIG_VIRTUALIZATION=y" >> $config_file
+          echo "CONFIG_KVM=y" >> $config_file
+          echo "CONFIG_KVM_INTEL=y" >> $config_file
+          echo "CONFIG_KVM_AMD=y" >> $config_file
+
+          # 添加 LXC 支持相关配置
+          echo "CONFIG_UTS_NS=y" >> $config_file
+          echo "CONFIG_IPC_NS=y" >> $config_file
+          echo "CONFIG_PID_NS=y" >> $config_file
+          echo "CONFIG_SECURITY_APPARMOR=y" >> $config_file
+
+          # 打印修改后的配置
+          echo "Updated $config_file:"
+          cat $config_file
+
+      # Step 6: 构建内核
+      - name: Build kernel with ThinLTO
         run: |
           cd kernel
-          if [ ! -f ".repo/manifest.xml" ]; then
-            echo "Manifest sync failed" && exit 1
-          fi
-          ls -al prebuilts/clang/host/linux-x86 || echo "Toolchain directory not found"
-          ls -al prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8 || echo "GCC toolchain directory not found"
+          LTO=thin BUILD_CONFIG=${{ github.event.inputs.build_config }} build/build.sh
 
-      # Step 7: 配置内核
-      - name: Configure kernel
+      # Step 7: 打包 AnyKernel3 ZIP 文件
+      - name: Package AnyKernel3
         run: |
-          cd kernel/common
-          export ARCH=arm64
-          export SUBARCH=arm64
-          # 动态工具链路径
-          export PATH=$PWD/../prebuilts/clang/host/linux-x86/clang-r*/bin:$PATH
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          make O=out aarch64_gki_defconfig
+          # 克隆 AnyKernel3 项目
+          git clone https://github.com/osm0sis/AnyKernel3.git anykernel3
 
-      # Step 8: 编译内核
-      - name: Build kernel
-        run: |
-          cd kernel/common
-          export ARCH=arm64
-          export PATH=$PWD/../prebuilts/clang/host/linux-x86/clang-r*/bin:$PATH
-          make -j$(nproc) O=out | tee build.log
+          # 复制内核镜像
+          cp kernel/out/arch/arm64/boot/Image.gz anykernel3/zImage || \
+          cp kernel/out/arch/arm64/boot/Image anykernel3/zImage
 
-      # Step 9: 上传构建日志和结果
-      - name: Upload build log
+          # 复制设备树文件（dtb）
+          mkdir -p anykernel3/dtb
+          cp kernel/out/arch/arm64/boot/dts/*.dtb anykernel3/dtb/
+
+          # 如果需要内核模块，复制到模块目录
+          mkdir -p anykernel3/modules
+          cp kernel/out/lib/modules/**/*.ko anykernel3/modules/ || true
+
+          # 压缩打包 AnyKernel3
+          cd anykernel3
+          zip -r9 AnyKernel3.zip ./*
+
+      # Step 8: 上传 AnyKernel3 ZIP 文件
+      - name: Upload AnyKernel3 ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
-          path: kernel/common/build.log
-      - name: Upload build artifacts
+          name: AnyKernel3-package
+          path: anykernel3/AnyKernel3.zip
+
+      # Step 9: 上传内核镜像文件
+      - name: Upload kernel image
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-build
-          path: kernel/common/out/arch/arm64/boot/
+          name: kernel-image
+          path: |
+            kernel/out/arch/arm64/boot/Image.gz
+            kernel/out/arch/arm64/boot/Image
+
+      # Step 10: 上传模块文件
+      - name: Upload kernel modules
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-modules
+          path: kernel/out/lib/modules/**/*.ko
+
+      # Step 11: 上传设备树文件
+      - name: Upload dtb files
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtb-files
+          path: kernel/out/arch/arm64/boot/dts/*.dtb
