@@ -1,4 +1,4 @@
-name: Build Android GKI Kernel
+name: Build GKI Kernel
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
-          echo "PATH=$HOME/bin:$PATH" >> $GITHUB_ENV
+          echo "PATH=$HOME/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH" >> $GITHUB_ENV
 
       # Step 4: 同步内核源码
       - name: Sync AOSP kernel source
